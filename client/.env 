@@ -1,0 +1,9 @@
+# Server Configuration
+HOST=127.0.0.1
+PORT=5000
+AUTH_TOKEN=secret-token-kde-bot-2025
+
+# File Storage
+DOWNLOAD_DIR=./downloads
+UPLOAD_DIR=./uploads
+SCREENSHOT_DIR=./screenshots
