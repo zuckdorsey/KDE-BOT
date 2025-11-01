@@ -6,7 +6,6 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def main_menu() -> InlineKeyboardMarkup:
-    """Create main menu keyboard"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text='🖥️ System', callback_data='menu_system'),
@@ -15,6 +14,14 @@ def main_menu() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text='📋 Clipboard', callback_data='menu_clipboard'),
             InlineKeyboardButton(text='📁 Files', callback_data='menu_files')
+        ],
+        [
+            InlineKeyboardButton(text='🎵 Player', callback_data='menu_player'),  # NEW
+            InlineKeyboardButton(text='🌐 Network', callback_data='menu_network')  # NEW
+        ],
+        [
+            InlineKeyboardButton(text='🔋 Battery', callback_data='cmd_battery'),  # NEW
+            InlineKeyboardButton(text='💻 Processes', callback_data='menu_processes')  # NEW
         ],
         [
             InlineKeyboardButton(text='ℹ️ Status', callback_data='cmd_status'),
@@ -85,4 +92,45 @@ def shutdown_confirm() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text='✅ Yes, Shutdown', callback_data='cmd_shutdown'),
             InlineKeyboardButton(text='❌ Cancel', callback_data='menu_system')
         ]
+    ])
+
+def player_menu() -> InlineKeyboardMarkup:
+    """Media player control menu"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text='⏮️ Previous', callback_data='media_previous'),
+            InlineKeyboardButton(text='⏯️ Play/Pause', callback_data='media_play_pause'),
+            InlineKeyboardButton(text='⏭️ Next', callback_data='media_next')
+        ],
+        [
+            InlineKeyboardButton(text='⏹️ Stop', callback_data='media_stop'),
+            InlineKeyboardButton(text='🎵 Now Playing', callback_data='media_now_playing')
+        ],
+        [InlineKeyboardButton(text='« Back to Menu', callback_data='menu_main')]
+    ])
+
+
+def network_menu() -> InlineKeyboardMarkup:
+    """Network information menu"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text='🌐 Network Info', callback_data='cmd_network_info'),
+            InlineKeyboardButton(text='📊 Network Stats', callback_data='cmd_network_stats')
+        ],
+        [InlineKeyboardButton(text='« Back to Menu', callback_data='menu_main')]
+    ])
+
+
+def processes_menu() -> InlineKeyboardMarkup:
+    """Process manager menu"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text='📊 Top CPU', callback_data='proc_list_cpu'),
+            InlineKeyboardButton(text='💾 Top RAM', callback_data='proc_list_mem')
+        ],
+        [
+            InlineKeyboardButton(text='🔍 Search Process', callback_data='proc_search_prompt'),
+            InlineKeyboardButton(text='❌ Kill Process', callback_data='proc_kill_prompt')
+        ],
+        [InlineKeyboardButton(text='« Back to Menu', callback_data='menu_main')]
     ])

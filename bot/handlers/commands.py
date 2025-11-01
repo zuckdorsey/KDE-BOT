@@ -117,3 +117,65 @@ async def cmd_copy(message: Message):
             '❌ Usage: /copy your text here',
             reply_markup=keyboards.clipboard_menu()
         )
+
+
+@router.message(Command('battery'))
+async def cmd_battery(message: Message):
+    """Handle /battery command"""
+    msg = await message.answer('🔋 Checking battery...')
+    result = await client.send_command('battery_status')
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+@router.message(Command('network'))
+async def cmd_network(message: Message):
+    """Handle /network command"""
+    msg = await message.answer('🌐 Getting network info...')
+    result = await client.send_command('network_info')
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+@router.message(Command('processes'))
+async def cmd_processes(message: Message):
+    """Handle /processes command"""
+    msg = await message.answer('💻 Getting process list...')
+    result = await client.send_command('process_list', {'sort_by': 'cpu', 'limit': 10})
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+@router.message(Command('kill'))
+async def cmd_kill(message: Message):
+    """Handle /kill <pid> command"""
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            raise ValueError
+
+        pid = int(args[1])
+
+        msg = await message.answer(f'❌ Killing process {pid}...')
+        result = await client.send_command('process_kill', {'pid': pid})
+
+        icon = '✅' if result.get('status') == 'success' else '❌'
+        await msg.edit_text(f"{icon} {result.get('message')}")
+
+    except (IndexError, ValueError):
+        await message.answer('❌ Usage: /kill <pid>\n\nExample: /kill 1234')

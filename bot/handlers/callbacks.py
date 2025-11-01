@@ -298,3 +298,196 @@ async def callback_cmd_status(callback: CallbackQuery):
             f'❌ Error: {str(e)}',
             reply_markup=keyboards.main_menu()
         )
+
+    @router.callback_query(F.data == 'menu_player')
+    async def callback_menu_player(callback: CallbackQuery):
+        """Show media player menu"""
+        await callback.message.edit_text(
+            '🎵 <b>Media Player Control</b>\n\nControl your media playback:',
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.player_menu()
+        )
+        await callback.answer()
+
+    @router.callback_query(F.data == 'menu_network')
+    async def callback_menu_network(callback: CallbackQuery):
+        """Show network menu"""
+        await callback.message.edit_text(
+            '🌐 <b>Network Information</b>\n\nView network details:',
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.network_menu()
+        )
+        await callback.answer()
+
+    @router.callback_query(F.data == 'menu_processes')
+    async def callback_menu_processes(callback: CallbackQuery):
+        """Show processes menu"""
+        await callback.message.edit_text(
+            '💻 <b>Process Manager</b>\n\nManage running processes:',
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.processes_menu()
+        )
+        await callback.answer()
+
+    # Media player handlers
+    @router.callback_query(F.data == 'media_play_pause')
+    async def callback_media_play_pause(callback: CallbackQuery):
+        await callback.answer('⏯️ Toggling play/pause...')
+        result = await client.send_command('media_play_pause')
+        icon = '✅' if result.get('status') == 'success' else '❌'
+        await callback.message.edit_text(
+            f"{icon} {result.get('message')}",
+            reply_markup=keyboards.player_menu()
+        )
+
+    @router.callback_query(F.data == 'media_next')
+    async def callback_media_next(callback: CallbackQuery):
+        await callback.answer('⏭️ Next track...')
+        result = await client.send_command('media_next')
+        icon = '✅' if result.get('status') == 'success' else '❌'
+        await callback.message.edit_text(
+            f"{icon} {result.get('message')}",
+            reply_markup=keyboards.player_menu()
+        )
+
+    @router.callback_query(F.data == 'media_previous')
+    async def callback_media_previous(callback: CallbackQuery):
+        await callback.answer('⏮️ Previous track...')
+        result = await client.send_command('media_previous')
+        icon = '✅' if result.get('status') == 'success' else '❌'
+        await callback.message.edit_text(
+            f"{icon} {result.get('message')}",
+            reply_markup=keyboards.player_menu()
+        )
+
+    @router.callback_query(F.data == 'media_stop')
+    async def callback_media_stop(callback: CallbackQuery):
+        await callback.answer('⏹️ Stopping...')
+        result = await client.send_command('media_stop')
+        icon = '✅' if result.get('status') == 'success' else '❌'
+        await callback.message.edit_text(
+            f"{icon} {result.get('message')}",
+            reply_markup=keyboards.player_menu()
+        )
+
+    @router.callback_query(F.data == 'media_now_playing')
+    async def callback_media_now_playing(callback: CallbackQuery):
+        await callback.answer('🎵 Getting track info...')
+        result = await client.send_command('media_now_playing')
+
+        if result.get('status') == 'success':
+            track = result.get('track', 'No track playing')
+            playback = result.get('playback_status', '')
+
+            text = f"🎵 <b>Now Playing</b>\n\n{track}"
+            if playback:
+                text += f"\n📊 Status: {playback}"
+        else:
+            text = f"❌ {result.get('message')}"
+
+        await callback.message.edit_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.player_menu()
+        )
+
+    # Battery handler
+    @router.callback_query(F.data == 'cmd_battery')
+    async def callback_cmd_battery(callback: CallbackQuery):
+        await callback.answer('🔋 Checking battery...')
+        result = await client.send_command('battery_status')
+
+        if result.get('status') == 'success':
+            text = result.get('details', result.get('message'))
+        else:
+            text = f"❌ {result.get('message')}"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboards.main_menu()
+        )
+
+    # Network handlers
+    @router.callback_query(F.data == 'cmd_network_info')
+    async def callback_cmd_network_info(callback: CallbackQuery):
+        await callback.answer('🌐 Getting network info...')
+        result = await client.send_command('network_info')
+
+        if result.get('status') == 'success':
+            text = result.get('details', result.get('message'))
+        else:
+            text = f"❌ {result.get('message')}"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboards.network_menu()
+        )
+
+    @router.callback_query(F.data == 'cmd_network_stats')
+    async def callback_cmd_network_stats(callback: CallbackQuery):
+        await callback.answer('📊 Getting network stats...')
+        result = await client.send_command('network_stats')
+
+        if result.get('status') == 'success':
+            text = result.get('details', result.get('message'))
+        else:
+            text = f"❌ {result.get('message')}"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboards.network_menu()
+        )
+
+    # Process handlers
+    @router.callback_query(F.data == 'proc_list_cpu')
+    async def callback_proc_list_cpu(callback: CallbackQuery):
+        await callback.answer('📊 Getting top CPU processes...')
+        result = await client.send_command('process_list', {'sort_by': 'cpu', 'limit': 10})
+
+        if result.get('status') == 'success':
+            text = result.get('details', result.get('message'))
+        else:
+            text = f"❌ {result.get('message')}"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboards.processes_menu()
+        )
+
+    @router.callback_query(F.data == 'proc_list_mem')
+    async def callback_proc_list_mem(callback: CallbackQuery):
+        await callback.answer('💾 Getting top RAM processes...')
+        result = await client.send_command('process_list', {'sort_by': 'memory', 'limit': 10})
+
+        if result.get('status') == 'success':
+            text = result.get('details', result.get('message'))
+        else:
+            text = f"❌ {result.get('message')}"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboards.processes_menu()
+        )
+
+    @router.callback_query(F.data == 'proc_search_prompt')
+    async def callback_proc_search_prompt(callback: CallbackQuery):
+        await callback.message.reply(
+            '🔍 <b>Search Process</b>\n\n'
+            'Send the process name to search:\n\n'
+            'Example: <code>chrome</code> or <code>firefox</code>',
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.processes_menu()
+        )
+        await callback.answer()
+
+    @router.callback_query(F.data == 'proc_kill_prompt')
+    async def callback_proc_kill_prompt(callback: CallbackQuery):
+        await callback.message.reply(
+            '❌ <b>Kill Process</b>\n\n'
+            'Send the PID (Process ID) to kill:\n\n'
+            'Example: <code>/kill 1234</code>\n\n'
+            '⚠️ Warning: This will terminate the process!',
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.processes_menu()
+        )
+        await callback.answer()

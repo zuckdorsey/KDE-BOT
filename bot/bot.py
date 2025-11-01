@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Telegram KDE Connect Bot - Pure Python with Reply Keyboard
-Keyboard buttons always visible at bottom of chat
+Version 1.1 - Media, Battery, Network, Process Management
 """
 
 import asyncio
@@ -10,7 +10,7 @@ import sys
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.enums import ParseMode
 
 import config
@@ -45,13 +45,21 @@ def main_keyboard():
                 KeyboardButton(text='📁 Files'),
             ],
             [
+                KeyboardButton(text='🎵 Player'),  # NEW V1.1
+                KeyboardButton(text='🌐 Network'),  # NEW V1.1
+            ],
+            [
+                KeyboardButton(text='🔋 Battery'),  # NEW V1.1
+                KeyboardButton(text='💻 Processes'),  # NEW V1.1
+            ],
+            [
                 KeyboardButton(text='ℹ️ Status'),
                 KeyboardButton(text='❓ Help'),
             ]
         ],
-        resize_keyboard=True,  # Make buttons smaller
-        persistent=True,  # Keyboard stays visible
-        one_time_keyboard=False  # Don't hide after press
+        resize_keyboard=True,
+        persistent=True,
+        one_time_keyboard=False
     )
     return keyboard
 
@@ -137,6 +145,68 @@ def files_keyboard():
     return keyboard
 
 
+def player_keyboard():
+    """Media player keyboard - NEW V1.1"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text='⏮️ Previous'),
+                KeyboardButton(text='⏯️ Play/Pause'),
+                KeyboardButton(text='⏭️ Next'),
+            ],
+            [
+                KeyboardButton(text='⏹️ Stop'),
+                KeyboardButton(text='🎵 Now Playing'),
+            ],
+            [
+                KeyboardButton(text='« Main Menu'),
+            ]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
+    return keyboard
+
+
+def network_keyboard():
+    """Network info keyboard - NEW V1.1"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text='🌐 Network Info'),
+                KeyboardButton(text='📊 Network Stats'),
+            ],
+            [
+                KeyboardButton(text='« Main Menu'),
+            ]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
+    return keyboard
+
+
+def process_keyboard():
+    """Process management keyboard - NEW V1.1"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text='📊 Top CPU'),
+                KeyboardButton(text='💾 Top RAM'),
+            ],
+            [
+                KeyboardButton(text='🔍 Search Process'),
+            ],
+            [
+                KeyboardButton(text='« Main Menu'),
+            ]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
+    return keyboard
+
+
 def cancel_keyboard():
     """Cancel keyboard - return to main menu"""
     keyboard = ReplyKeyboardMarkup(
@@ -175,8 +245,13 @@ async def cmd_start(message: Message):
         return
 
     await message.answer(
-        '🤖 <b>KDE Connect Bot</b>\n\n'
+        '🤖 <b>KDE Connect Bot v1.1</b>\n\n'
         'Control your PC from Telegram!\n\n'
+        '<b>New in v1.1:</b>\n'
+        '🎵 Media Player Control\n'
+        '🔋 Battery Monitoring\n'
+        '🌐 Network Information\n'
+        '💻 Process Management\n\n'
         'Use the keyboard buttons below to navigate.',
         parse_mode=ParseMode.HTML,
         reply_markup=main_keyboard()
@@ -195,6 +270,9 @@ async def cmd_help(message: Message):
         '<b>Text Commands:</b>\n'
         '/start - Show main menu\n'
         '/status - System status\n'
+        '/battery - Battery status\n'
+        '/network - Network info\n'
+        '/processes - Process list\n'
         '/volume &lt;0-100&gt; - Set volume\n'
         '/copy &lt;text&gt; - Copy text\n'
         '/help - Show this help\n\n'
@@ -284,6 +362,56 @@ async def cmd_copy(message: Message):
         )
 
 
+# NEW V1.1 COMMANDS
+
+async def cmd_battery(message: Message):
+    """Handle /battery command"""
+    if not await authorize(message):
+        return
+
+    msg = await message.answer('🔋 Checking battery...')
+    result = await client.send_command('battery_status')
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+async def cmd_network(message: Message):
+    """Handle /network command"""
+    if not await authorize(message):
+        return
+
+    msg = await message.answer('🌐 Getting network info...')
+    result = await client.send_command('network_info')
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+async def cmd_processes(message: Message):
+    """Handle /processes command"""
+    if not await authorize(message):
+        return
+
+    msg = await message.answer('💻 Getting process list...')
+    result = await client.send_command('process_list', {'sort_by': 'cpu', 'limit': 10})
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
 # ===========================
 # KEYBOARD BUTTON HANDLERS
 # ===========================
@@ -333,6 +461,37 @@ async def handle_files_menu(message: Message):
     )
 
 
+# NEW V1.1 MENU HANDLERS
+
+async def handle_player_menu(message: Message):
+    """Show media player menu"""
+    await message.answer(
+        '🎵 <b>Media Player</b>\n\nControl playback:',
+        parse_mode=ParseMode.HTML,
+        reply_markup=player_keyboard()
+    )
+
+
+async def handle_network_menu(message: Message):
+    """Show network menu"""
+    await message.answer(
+        '🌐 <b>Network Information</b>\n\nView network details:',
+        parse_mode=ParseMode.HTML,
+        reply_markup=network_keyboard()
+    )
+
+
+async def handle_process_menu(message: Message):
+    """Show process menu"""
+    await message.answer(
+        '💻 <b>Process Manager</b>\n\nManage processes:',
+        parse_mode=ParseMode.HTML,
+        reply_markup=process_keyboard()
+    )
+
+
+# SYSTEM HANDLERS
+
 async def handle_lock_screen(message: Message):
     """Lock screen"""
     msg = await message.answer('🔒 Locking screen...')
@@ -361,15 +520,9 @@ async def handle_screenshot(message: Message):
         result = await client.send_command('screenshot')
 
         if result.get('status') == 'success' and result.get('file'):
-            # Download screenshot
             screenshot_data = await client.get_screenshot(result['file'])
-
-            # Send as photo
             photo = BufferedInputFile(screenshot_data, filename='screenshot.png')
-            await message.answer_photo(
-                photo=photo,
-                caption='📸 Screenshot'
-            )
+            await message.answer_photo(photo=photo, caption='📸 Screenshot')
             await msg.delete()
         else:
             await msg.edit_text(f"❌ {result.get('message')}")
@@ -400,6 +553,8 @@ async def handle_confirm_shutdown(message: Message):
     )
 
 
+# MEDIA HANDLERS
+
 async def handle_mute(message: Message):
     """Toggle mute"""
     msg = await message.answer('🔇 Toggling mute...')
@@ -417,6 +572,8 @@ async def handle_volume_button(message: Message, level: int):
     icon = '✅' if result.get('status') == 'success' else '❌'
     await msg.edit_text(f"{icon} {result.get('message')}")
 
+
+# CLIPBOARD HANDLERS
 
 async def handle_paste(message: Message):
     """Get clipboard content"""
@@ -446,6 +603,8 @@ async def handle_copy_prompt(message: Message):
     )
 
 
+# FILE HANDLERS
+
 async def handle_upload_prompt(message: Message):
     """Prompt for file upload"""
     await message.answer(
@@ -470,6 +629,145 @@ async def handle_download_prompt(message: Message):
     )
 
 
+# NEW V1.1 HANDLERS
+
+# Media Player Handlers
+
+async def handle_play_pause(message: Message):
+    """Toggle play/pause"""
+    msg = await message.answer('⏯️ Toggling play/pause...')
+    result = await client.send_command('media_play_pause')
+
+    icon = '✅' if result.get('status') == 'success' else '❌'
+    await msg.edit_text(f"{icon} {result.get('message')}")
+
+
+async def handle_next(message: Message):
+    """Next track"""
+    msg = await message.answer('⏭️ Next track...')
+    result = await client.send_command('media_next')
+
+    icon = '✅' if result.get('status') == 'success' else '❌'
+    await msg.edit_text(f"{icon} {result.get('message')}")
+
+
+async def handle_previous(message: Message):
+    """Previous track"""
+    msg = await message.answer('⏮️ Previous track...')
+    result = await client.send_command('media_previous')
+
+    icon = '✅' if result.get('status') == 'success' else '❌'
+    await msg.edit_text(f"{icon} {result.get('message')}")
+
+
+async def handle_stop(message: Message):
+    """Stop playback"""
+    msg = await message.answer('⏹️ Stopping...')
+    result = await client.send_command('media_stop')
+
+    icon = '✅' if result.get('status') == 'success' else '❌'
+    await msg.edit_text(f"{icon} {result.get('message')}")
+
+
+async def handle_now_playing(message: Message):
+    """Show now playing"""
+    msg = await message.answer('🎵 Getting track info...')
+    result = await client.send_command('media_now_playing')
+
+    if result.get('status') == 'success':
+        track = result.get('track', 'No track playing')
+        status_text = result.get('playback_status', '')
+        text = f"🎵 <b>Now Playing</b>\n\n{track}"
+        if status_text:
+            text += f"\n📊 Status: {status_text}"
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text, parse_mode=ParseMode.HTML)
+
+
+# Battery Handler
+
+async def handle_battery(message: Message):
+    """Show battery status"""
+    msg = await message.answer('🔋 Checking battery...')
+    result = await client.send_command('battery_status')
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+# Network Handlers
+
+async def handle_network_info(message: Message):
+    """Show network info"""
+    msg = await message.answer('🌐 Getting network info...')
+    result = await client.send_command('network_info')
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+async def handle_network_stats(message: Message):
+    """Show network stats"""
+    msg = await message.answer('📊 Getting network stats...')
+    result = await client.send_command('network_stats')
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+# Process Handlers
+
+async def handle_top_cpu(message: Message):
+    """Show top CPU processes"""
+    msg = await message.answer('📊 Getting top CPU processes...')
+    result = await client.send_command('process_list', {'sort_by': 'cpu', 'limit': 10})
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+async def handle_top_ram(message: Message):
+    """Show top RAM processes"""
+    msg = await message.answer('💾 Getting top RAM processes...')
+    result = await client.send_command('process_list', {'sort_by': 'memory', 'limit': 10})
+
+    if result.get('status') == 'success':
+        text = result.get('details', result.get('message'))
+    else:
+        text = f"❌ {result.get('message')}"
+
+    await msg.edit_text(text)
+
+
+async def handle_search_process_prompt(message: Message):
+    """Prompt for process search"""
+    await message.answer(
+        '🔍 <b>Search Process</b>\n\n'
+        'Send the process name to search:\n\n'
+        'Example: <code>chrome</code> or <code>firefox</code>',
+        parse_mode=ParseMode.HTML,
+        reply_markup=cancel_keyboard()
+    )
+
+
 async def handle_cancel(message: Message):
     """Cancel current operation"""
     await message.answer(
@@ -478,9 +776,7 @@ async def handle_cancel(message: Message):
     )
 
 
-# ===========================
-# FILE HANDLERS
-# ===========================
+# FILE UPLOAD/DOWNLOAD HANDLERS
 
 async def handle_document(message: Message):
     """Handle document upload"""
@@ -559,7 +855,6 @@ async def handle_text(message: Message):
             file_data = await client.download_file(text)
             filename = os.path.basename(text)
 
-            # Send as document
             document = BufferedInputFile(file_data, filename=filename)
             await message.answer_document(document=document)
             await msg.delete()
@@ -583,11 +878,16 @@ async def main():
 
     # Banner
     print('\n' + '=' * 60)
-    print('🤖 Telegram KDE Connect Bot - Reply Keyboard')
+    print('🤖 Telegram KDE Connect Bot v1.1 - Reply Keyboard')
     print('=' * 60)
     print(f'👤 Owner: {config.OWNER_ID}')
     print(f'🔗 Client: {config.CLIENT_URL}')
     print(f'🔑 Auth: {config.AUTH_TOKEN[:10]}...{config.AUTH_TOKEN[-5:]}')
+    print('\n🆕 Version 1.1 Features:')
+    print('   ✅ Media player control')
+    print('   ✅ Battery monitoring')
+    print('   ✅ Network information')
+    print('   ✅ Process management')
     print('=' * 60)
     print('\n📡 Starting bot with long polling...\n')
 
@@ -601,14 +901,22 @@ async def main():
     dp.message.register(cmd_status, Command('status'))
     dp.message.register(cmd_volume, Command('volume'))
     dp.message.register(cmd_copy, Command('copy'))
+    dp.message.register(cmd_battery, Command('battery'))
+    dp.message.register(cmd_network, Command('network'))
+    dp.message.register(cmd_processes, Command('processes'))
     dp.message.register(handle_confirm_shutdown, Command('confirm_shutdown'))
 
-    # Register keyboard button handlers (exact text match)
+    # Register menu button handlers
     dp.message.register(handle_main_menu, F.text == '« Main Menu')
     dp.message.register(handle_system_menu, F.text == '🖥️ System')
     dp.message.register(handle_media_menu, F.text == '🔊 Media')
     dp.message.register(handle_clipboard_menu, F.text == '📋 Clipboard')
     dp.message.register(handle_files_menu, F.text == '📁 Files')
+
+    # NEW V1.1 Menu Buttons
+    dp.message.register(handle_player_menu, F.text == '🎵 Player')
+    dp.message.register(handle_network_menu, F.text == '🌐 Network')
+    dp.message.register(handle_process_menu, F.text == '💻 Processes')
 
     # System buttons
     dp.message.register(handle_lock_screen, F.text == '🔒 Lock Screen')
@@ -631,6 +939,27 @@ async def main():
     dp.message.register(handle_upload_prompt, F.text == '📤 Upload File')
     dp.message.register(handle_download_prompt, F.text == '📥 Download File')
 
+    # NEW V1.1 Button Handlers
+
+    # Player buttons
+    dp.message.register(handle_play_pause, F.text == '⏯️ Play/Pause')
+    dp.message.register(handle_next, F.text == '⏭️ Next')
+    dp.message.register(handle_previous, F.text == '⏮️ Previous')
+    dp.message.register(handle_stop, F.text == '⏹️ Stop')
+    dp.message.register(handle_now_playing, F.text == '🎵 Now Playing')
+
+    # Battery button
+    dp.message.register(handle_battery, F.text == '🔋 Battery')
+
+    # Network buttons
+    dp.message.register(handle_network_info, F.text == '🌐 Network Info')
+    dp.message.register(handle_network_stats, F.text == '📊 Network Stats')
+
+    # Process buttons
+    dp.message.register(handle_top_cpu, F.text == '📊 Top CPU')
+    dp.message.register(handle_top_ram, F.text == '💾 Top RAM')
+    dp.message.register(handle_search_process_prompt, F.text == '🔍 Search Process')
+
     # Other buttons
     dp.message.register(cmd_status, F.text == 'ℹ️ Status')
     dp.message.register(cmd_help, F.text == '❓ Help')
@@ -640,7 +969,7 @@ async def main():
     dp.message.register(handle_document, F.document)
     dp.message.register(handle_photo, F.photo)
 
-    # Text handler (last, catch-all for file paths or text to copy)
+    # Text handler (last, catch-all)
     dp.message.register(handle_text, F.text & ~F.text.startswith('/'))
 
     # Start polling

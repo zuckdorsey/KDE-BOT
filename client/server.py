@@ -39,8 +39,6 @@ def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get('Authorization', '')
-
-        # Extract token
         token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else auth_header
 
         if not token:
@@ -63,7 +61,7 @@ def require_auth(f):
 
 @app.route('/', methods=['GET'])
 def index():
-    return jsonify({'status': 'online', 'service': 'KDE Connect Bot Client'}), 200
+    return jsonify({'status': 'online', 'service': 'KDE Connect Bot Client v1.1'}), 200
 
 
 @app.route('/status', methods=['GET'])
@@ -146,13 +144,14 @@ def download_file(filename):
 
 
 # ===========================
-# COMMAND EXECUTION
+# COMMAND EXECUTION (EXTENDED FOR V1.1)
 # ===========================
 
 def execute_command(command, params):
     os_name = platform.system()
 
     try:
+        # ===== EXISTING COMMANDS =====
         if command == 'lock':
             if os_name == 'Linux':
                 subprocess.run(['loginctl', 'lock-session'], check=False)
@@ -160,7 +159,7 @@ def execute_command(command, params):
                 subprocess.run(['rundll32.exe', 'user32.dll,LockWorkStation'])
             elif os_name == 'Darwin':
                 subprocess.run(
-                    ['/System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession', '-suspend'])
+                    ['/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession', '-suspend'])
             return {'status': 'success', 'message': '🔒 Screen locked'}
 
         elif command == 'volume':
@@ -194,12 +193,23 @@ def execute_command(command, params):
             return {'status': 'success', 'message': 'Clipboard content', 'content': content}
 
         elif command == 'screenshot':
-            from PIL import ImageGrab
-            screenshot = ImageGrab.grab()
+            # Using scrot as per your implementation
+            if os_name != 'Linux':
+                return {'status': 'error', 'message': 'Screenshot only supported on Linux'}
+
+            env = os.environ.copy()
+            if 'DISPLAY' not in env:
+                env['DISPLAY'] = ':0'
+
             filename = f'screenshot_{int(time.time())}.png'
             filepath = os.path.join(SCREENSHOT_DIR, filename)
-            screenshot.save(filepath)
-            return {'status': 'success', 'message': '📸 Screenshot captured', 'file': filename}
+
+            result = subprocess.run(['scrot', '-z', filepath], env=env, capture_output=True, timeout=10)
+
+            if result.returncode == 0 and os.path.exists(filepath):
+                return {'status': 'success', 'message': '📸 Screenshot captured', 'file': filename}
+            else:
+                return {'status': 'error', 'message': 'Screenshot failed. Install scrot: sudo pacman -S scrot'}
 
         elif command == 'sleep':
             if os_name == 'Linux':
@@ -212,12 +222,238 @@ def execute_command(command, params):
 
         elif command == 'shutdown':
             if os_name == 'Linux':
-                subprocess.Popen(['shutdown', '-h', 'now'])
+                subprocess.Popen(['shutdown', '-h', '+1'])
             elif os_name == 'Windows':
-                subprocess.Popen(['shutdown', '/s', '/t', '5'])
+                subprocess.Popen(['shutdown', '/s', '/t', '60'])
             elif os_name == 'Darwin':
-                subprocess.Popen(['sudo', 'shutdown', '-h', 'now'])
-            return {'status': 'success', 'message': '⚠️ Shutting down...'}
+                subprocess.Popen(['sudo', 'shutdown', '-h', '+1'])
+            return {'status': 'success', 'message': '⚠️ Shutting down in 1 minute...'}
+
+        # ===== NEW V1.1 COMMANDS =====
+
+        # Media Player Control
+        elif command == 'media_play_pause':
+            if os_name == 'Linux':
+                try:
+                    subprocess.run(['playerctl', 'play-pause'], check=True, timeout=5)
+                    return {'status': 'success', 'message': '⏯️ Play/Pause toggled'}
+                except FileNotFoundError:
+                    return {'status': 'error', 'message': 'playerctl not installed. Install: sudo pacman -S playerctl'}
+            return {'status': 'error', 'message': 'Not supported on this OS'}
+
+        elif command == 'media_next':
+            if os_name == 'Linux':
+                try:
+                    subprocess.run(['playerctl', 'next'], check=True, timeout=5)
+                    return {'status': 'success', 'message': '⏭️ Next track'}
+                except FileNotFoundError:
+                    return {'status': 'error', 'message': 'playerctl not installed'}
+            return {'status': 'error', 'message': 'Not supported on this OS'}
+
+        elif command == 'media_previous':
+            if os_name == 'Linux':
+                try:
+                    subprocess.run(['playerctl', 'previous'], check=True, timeout=5)
+                    return {'status': 'success', 'message': '⏮️ Previous track'}
+                except FileNotFoundError:
+                    return {'status': 'error', 'message': 'playerctl not installed'}
+            return {'status': 'error', 'message': 'Not supported on this OS'}
+
+        elif command == 'media_stop':
+            if os_name == 'Linux':
+                try:
+                    subprocess.run(['playerctl', 'stop'], check=True, timeout=5)
+                    return {'status': 'success', 'message': '⏹️ Playback stopped'}
+                except FileNotFoundError:
+                    return {'status': 'error', 'message': 'playerctl not installed'}
+            return {'status': 'error', 'message': 'Not supported on this OS'}
+
+        elif command == 'media_now_playing':
+            if os_name == 'Linux':
+                try:
+                    artist = subprocess.run(['playerctl', 'metadata', 'artist'], capture_output=True, text=True,
+                                            timeout=5).stdout.strip()
+                    title = subprocess.run(['playerctl', 'metadata', 'title'], capture_output=True, text=True,
+                                           timeout=5).stdout.strip()
+                    status = subprocess.run(['playerctl', 'status'], capture_output=True, text=True,
+                                            timeout=5).stdout.strip()
+
+                    if artist and title:
+                        return {
+                            'status': 'success',
+                            'message': '🎵 Now Playing',
+                            'track': f'{artist} - {title}',
+                            'playback_status': status
+                        }
+                    return {'status': 'success', 'message': '🎵 No track playing'}
+                except FileNotFoundError:
+                    return {'status': 'error', 'message': 'playerctl not installed'}
+            return {'status': 'error', 'message': 'Not supported on this OS'}
+
+        # Battery Status
+        elif command == 'battery_status':
+            battery = psutil.sensors_battery()
+
+            if battery is None:
+                return {'status': 'success', 'message': '🔌 No battery detected (Desktop PC)', 'has_battery': False}
+
+            percent = battery.percent
+            plugged = battery.power_plugged
+            charging_status = '🔌 Charging' if plugged else '🔋 On Battery'
+
+            time_remaining = battery.secsleft
+            if time_remaining == psutil.POWER_TIME_UNLIMITED:
+                time_str = 'Unlimited (Plugged in)'
+            elif time_remaining == psutil.POWER_TIME_UNKNOWN:
+                time_str = 'Unknown'
+            else:
+                hours = time_remaining // 3600
+                minutes = (time_remaining % 3600) // 60
+                time_str = f'{hours}h {minutes}m remaining'
+
+            icon = '🔋' if percent >= 30 else '⚠️' if percent >= 15 else '❗'
+
+            details = f'{icon} {percent}% - {charging_status}\n⏱️ {time_str}'
+
+            return {
+                'status': 'success',
+                'message': f'{icon} Battery Status',
+                'percent': percent,
+                'charging': plugged,
+                'details': details
+            }
+
+        # Network Information
+        elif command == 'network_info':
+            import socket
+
+            hostname = socket.gethostname()
+
+            # Get interfaces
+            interfaces = []
+            stats = psutil.net_if_addrs()
+            for iface, addrs in stats.items():
+                for addr in addrs:
+                    if addr.family == socket.AF_INET and addr.address != '127.0.0.1':
+                        interfaces.append({'name': iface, 'ip': addr.address})
+
+            details = f"🖥️ Hostname: {hostname}\n\n"
+            if interfaces:
+                details += "📡 Network Interfaces:\n"
+                for iface in interfaces:
+                    details += f"  • {iface['name']}: {iface['ip']}\n"
+
+            return {
+                'status': 'success',
+                'message': '🌐 Network Information',
+                'hostname': hostname,
+                'interfaces': interfaces,
+                'details': details
+            }
+
+        elif command == 'network_stats':
+            stats = psutil.net_io_counters()
+
+            def bytes_to_human(n):
+                for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                    if n < 1024.0:
+                        return f"{n:.2f} {unit}"
+                    n /= 1024.0
+
+            details = (
+                f"📤 Sent: {bytes_to_human(stats.bytes_sent)}\n"
+                f"📥 Received: {bytes_to_human(stats.bytes_recv)}\n"
+                f"📦 Packets Sent: {stats.packets_sent:,}\n"
+                f"📦 Packets Recv: {stats.packets_recv:,}"
+            )
+
+            return {
+                'status': 'success',
+                'message': '📊 Network Statistics',
+                'sent': bytes_to_human(stats.bytes_sent),
+                'received': bytes_to_human(stats.bytes_recv),
+                'details': details
+            }
+
+        # Process Management
+        elif command == 'process_list':
+            sort_by = params.get('sort_by', 'cpu')
+            limit = params.get('limit', 10)
+
+            processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+                try:
+                    info = proc.info
+                    processes.append({
+                        'pid': info['pid'],
+                        'name': info['name'],
+                        'cpu': info['cpu_percent'] or 0,
+                        'memory': info['memory_percent'] or 0
+                    })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            # Sort
+            if sort_by == 'cpu':
+                processes.sort(key=lambda x: x['cpu'], reverse=True)
+            elif sort_by == 'memory':
+                processes.sort(key=lambda x: x['memory'], reverse=True)
+
+            top_processes = processes[:limit]
+
+            details = f"🔝 Top {limit} Processes (by {sort_by.upper()}):\n\n"
+            for i, proc in enumerate(top_processes, 1):
+                details += f"{i}. {proc['name']}\n   PID: {proc['pid']} | CPU: {proc['cpu']:.1f}% | RAM: {proc['memory']:.1f}%\n\n"
+
+            return {
+                'status': 'success',
+                'message': '💻 Process List',
+                'processes': top_processes,
+                'details': details
+            }
+
+        elif command == 'process_search':
+            name = params.get('name', '')
+            matches = []
+
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+                try:
+                    if name.lower() in proc.info['name'].lower():
+                        matches.append({
+                            'pid': proc.info['pid'],
+                            'name': proc.info['name'],
+                            'cpu': proc.info['cpu_percent'] or 0,
+                            'memory': proc.info['memory_percent'] or 0
+                        })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            if not matches:
+                return {'status': 'success', 'message': f'🔍 No processes found matching: {name}'}
+
+            details = f"🔍 Found {len(matches)} process(es) matching '{name}':\n\n"
+            for proc in matches:
+                details += f"• {proc['name']}\n  PID: {proc['pid']} | CPU: {proc['cpu']:.1f}% | RAM: {proc['memory']:.1f}%\n\n"
+
+            return {
+                'status': 'success',
+                'message': f'🔍 Search Results',
+                'processes': matches,
+                'details': details
+            }
+
+        elif command == 'process_kill':
+            pid = params.get('pid')
+            try:
+                process = psutil.Process(pid)
+                name = process.name()
+                process.terminate()
+                process.wait(timeout=5)
+                return {'status': 'success', 'message': f'✅ Process killed: {name} (PID: {pid})'}
+            except psutil.NoSuchProcess:
+                return {'status': 'error', 'message': f'❌ Process not found (PID: {pid})'}
+            except psutil.AccessDenied:
+                return {'status': 'error', 'message': f'❌ Access denied (PID: {pid})'}
 
         else:
             return {'status': 'error', 'message': f'Unknown command: {command}'}
@@ -233,13 +469,18 @@ def execute_command(command, params):
 
 if __name__ == '__main__':
     print('\n' + '=' * 60)
-    print('🚀 KDE Connect Bot - Python Client')
+    print('🚀 KDE Connect Bot - Python Client v1.1')
     print('=' * 60)
     print(f'📡 Host: {HOST}')
     print(f'🔌 Port: {PORT}')
-    print(f'🔒 Auth: {"✅ ENABLED" if AUTH_TOKEN else "❌ DISABLED (NOT SECURE!)"}')
+    print(f'🔒 Auth: {"✅ ENABLED" if AUTH_TOKEN else "❌ DISABLED"}')
     if AUTH_TOKEN:
         print(f'🔑 Token: {AUTH_TOKEN[:10]}...{AUTH_TOKEN[-5:]}')
+    print('\n🆕 Version 1.1 Features:')
+    print('   ✅ Media player control (playerctl)')
+    print('   ✅ Battery status monitoring')
+    print('   ✅ Network information')
+    print('   ✅ Process management')
     print('=' * 60)
     print(f'\n✅ Server running at http://{HOST}:{PORT}')
     print('   Waiting for Telegram bot commands...\n')
