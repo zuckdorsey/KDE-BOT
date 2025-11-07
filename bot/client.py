@@ -7,7 +7,7 @@ import aiohttp
 import asyncio
 import logging
 from typing import Dict, Optional, Any, Callable, Awaitable
-import config
+from . import config
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +23,21 @@ class SystemClient:
             'Authorization': f'Bearer {self.auth_token}',
             'Content-Type': 'application/json'
         }
-        # Retry config
+        # Retry config (exponential backoff)
         self._max_attempts = 3
-        self._base_backoff = 0.3  # seconds
+        self._base_backoff = 0.25  # seconds
+        self._session: Optional[aiohttp.ClientSession] = None  # persistent session
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Lazy-create a persistent aiohttp session reused across requests."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=self.timeout)
+        return self._session
+
+    async def aclose(self):
+        """Close underlying session (called on bot shutdown)."""
+        if self._session and not self._session.closed:
+            await self._session.close()
 
     async def _with_retries(self, func: Callable[[], Awaitable[Any]]) -> Any:
         last_exc: Optional[Exception] = None
@@ -36,9 +48,9 @@ class SystemClient:
                 last_exc = e
                 logger.warning("Request attempt %d/%d failed: %s", attempt, self._max_attempts, e)
                 if attempt < self._max_attempts:
-                    await asyncio.sleep(self._base_backoff * attempt)
+                    backoff = self._base_backoff * (2 ** (attempt - 1))
+                    await asyncio.sleep(backoff)
             except Exception as e:
-                # Non-retryable
                 last_exc = e
                 break
         if last_exc:
@@ -52,16 +64,16 @@ class SystemClient:
         payload = {'command': command, 'params': params or {}}
 
         async def _do():
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    if response.status == 401:
-                        return {'status': 'error', 'message': 'Authentication failed. Check AUTH_TOKEN on bot and client.'}
-                    if response.status >= 500:
-                        text = await response.text()
-                        logger.error("Server error %s: %s", response.status, text)
-                        return {'status': 'error', 'message': 'Local client error (5xx). Try again.'}
-                    response.raise_for_status()
-                    return await response.json()
+            session = await self._get_session()
+            async with session.post(url, json=payload, headers=self.headers) as response:
+                if response.status == 401:
+                    return {'status': 'error', 'message': 'Authentication failed. Check AUTH_TOKEN on bot and client.'}
+                if response.status >= 500:
+                    text = await response.text()
+                    logger.error("Server error %s: %s", response.status, text)
+                    return {'status': 'error', 'message': 'Local client error (5xx). Try again.'}
+                response.raise_for_status()
+                return await response.json()
 
         try:
             return await self._with_retries(_do)
@@ -78,10 +90,10 @@ class SystemClient:
         url = f'{self.base_url}/status'
 
         async def _do():
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.get(url, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.json()
+            session = await self._get_session()
+            async with session.get(url, headers=self.headers) as response:
+                response.raise_for_status()
+                return await response.json()
 
         try:
             return await self._with_retries(_do)
@@ -95,12 +107,12 @@ class SystemClient:
         payload = {'filename': filename, 'url': file_url, 'size': file_size}
 
         async def _do():
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    if response.status == 401:
-                        return {'status': 'error', 'message': 'Authentication failed for upload.'}
-                    response.raise_for_status()
-                    return await response.json()
+            session = await self._get_session()
+            async with session.post(url, json=payload, headers=self.headers) as response:
+                if response.status == 401:
+                    return {'status': 'error', 'message': 'Authentication failed for upload.'}
+                response.raise_for_status()
+                return await response.json()
 
         try:
             return await self._with_retries(_do)
@@ -114,10 +126,10 @@ class SystemClient:
         payload = {'path': filepath}
 
         async def _do():
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json=payload, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.read()
+            session = await self._get_session()
+            async with session.post(url, json=payload, headers=self.headers) as response:
+                response.raise_for_status()
+                return await response.read()
 
         return await self._with_retries(_do)
 
@@ -126,9 +138,9 @@ class SystemClient:
         url = f'{self.base_url}/download/{filename}'
 
         async def _do():
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.get(url, headers=self.headers) as response:
-                    response.raise_for_status()
-                    return await response.read()
+            session = await self._get_session()
+            async with session.get(url, headers=self.headers) as response:
+                response.raise_for_status()
+                return await response.read()
 
         return await self._with_retries(_do)

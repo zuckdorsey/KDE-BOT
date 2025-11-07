@@ -12,7 +12,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.enums import ParseMode, ChatAction
 
-import config
+from . import config
 from client import SystemClient
 from middlewares.error import ErrorMiddleware
 from utils import safe_edit, safe_delete, chat_action, result_icon, ephemeral_notice
@@ -323,6 +323,78 @@ async def handle_files_menu(message: Message):
     await message.answer('📁 <b>Files</b>', parse_mode=ParseMode.HTML, reply_markup=files_keyboard())
 
 
+async def handle_battery(message: Message):
+    if not await authorize(message):
+        return
+
+    async def runner():
+        msg = await message.answer('🔋 Checking battery...')
+        result = await client.send_command('battery_status')
+        text = result.get('details') or result.get('message')
+        await safe_edit(msg, text)
+
+    await command_manager.run_exclusive(
+        chat_id=message.chat.id,
+        coro_factory=runner,
+        on_cancel=lambda: ephemeral_notice(message, '⏳ Battery check cancelled.')
+    )
+
+
+async def handle_network(message: Message):
+    if not await authorize(message):
+        return
+
+    async def runner():
+        msg = await message.answer('🌐 Getting network info...')
+        result = await client.send_command('network_info')
+        text = result.get('details') or result.get('message')
+        await safe_edit(msg, text)
+
+    await command_manager.run_exclusive(
+        chat_id=message.chat.id,
+        coro_factory=runner,
+        on_cancel=lambda: ephemeral_notice(message, '⏳ Network info cancelled.')
+    )
+
+
+async def handle_processes(message: Message):
+    if not await authorize(message):
+        return
+
+    async def runner():
+        msg = await message.answer('💻 Getting top processes...')
+        result = await client.send_command('process_list', {'sort_by': 'cpu', 'limit': 10})
+        text = result.get('details') or result.get('message')
+        await safe_edit(msg, text)
+
+    await command_manager.run_exclusive(
+        chat_id=message.chat.id,
+        coro_factory=runner,
+        on_cancel=lambda: ephemeral_notice(message, '⏳ Process list cancelled.')
+    )
+
+
+async def handle_player(message: Message):
+    if not await authorize(message):
+        return
+
+    async def runner():
+        msg = await message.answer('🎵 Now playing...')
+        result = await client.send_command('media_now_playing')
+        if result.get('status') == 'success':
+            track = result.get('track') or result.get('message')
+            text = f"🎵 {track}"
+        else:
+            text = f"❌ {result.get('message')}"
+        await safe_edit(msg, text)
+
+    await command_manager.run_exclusive(
+        chat_id=message.chat.id,
+        coro_factory=runner,
+        on_cancel=lambda: ephemeral_notice(message, '⏳ Player request cancelled.')
+    )
+
+
 async def main():
     print('\n' + '=' * 60)
     print('🤖 KDE Connect Bot - Exclusive Command Mode')
@@ -349,6 +421,10 @@ async def main():
     dp.message.register(handle_media_menu, F.text == '🔊 Media')
     dp.message.register(handle_clipboard_menu, F.text == '📋 Clipboard')
     dp.message.register(handle_files_menu, F.text == '📁 Files')
+    dp.message.register(handle_battery, F.text == '🔋 Battery')
+    dp.message.register(handle_network, F.text == '🌐 Network')
+    dp.message.register(handle_processes, F.text == '💻 Processes')
+    dp.message.register(handle_player, F.text == '🎵 Player')
 
     # Actions
     dp.message.register(handle_lock_screen, F.text == '🔒 Lock Screen')
@@ -372,6 +448,11 @@ async def main():
         await dp.start_polling(bot)
     finally:
         command_manager.cancel_all()
+        # Close Telegram and HTTP client sessions gracefully
+        try:
+            await client.aclose()
+        except Exception:
+            pass
         await bot.session.close()
 
 

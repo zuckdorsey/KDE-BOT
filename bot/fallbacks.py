@@ -5,7 +5,7 @@ Fallback handlers to catch unknown commands/text and old inline callbacks.
 import logging
 from aiogram.types import Message, CallbackQuery
 from aiogram.enums import ParseMode
-import config
+from . import config
 
 logger = logging.getLogger(__name__)
 

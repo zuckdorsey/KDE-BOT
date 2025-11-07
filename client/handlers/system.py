@@ -113,78 +113,119 @@ class SystemHandler:
     # ===========================
 
     def take_screenshot(self):
-        """
-        Take screenshot using SCROT only
-        Most reliable method for Arch Linux
+        """Take a screenshot with best-effort tool selection.
+
+        - Wayland: prefer grim (sway/Hyprland), then spectacle (KDE), then gnome-screenshot.
+        - X11: use scrot with DISPLAY fallback.
+        Notes:
+        - Black screenshots typically mean capturing under Wayland with X11 tools (scrot) or locked session.
+        - This method tries multiple tools and returns first successful capture.
         """
 
         if self.os_name != 'Linux':
-            return {
-                'status': 'error',
-                'message': 'Screenshot only supported on Linux with scrot'
-            }
+            return {'status': 'error', 'message': 'Screenshot supported on Linux only in this build'}
 
         timestamp = int(time.time())
         filename = f'screenshot_{timestamp}.png'
         filepath = os.path.join(self.config['SCREENSHOT_DIR'], filename)
 
-        logger.info(f"Taking screenshot with scrot: {filename}")
+        env = os.environ.copy()
+        session_type = env.get('XDG_SESSION_TYPE', '').lower()
+        desktop_env = (env.get('XDG_CURRENT_DESKTOP') or env.get('DESKTOP_SESSION') or '').lower()
+        logger.info(f"Screenshot session: {session_type or 'unknown'} | desktop: {desktop_env or 'unknown'}")
+
+        def _exists(cmd):
+            return subprocess.call(['which', cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+        def _ok(path):
+            # Some black screenshots are tiny (just header). Require minimal size.
+            return os.path.exists(path) and os.path.getsize(path) > 2000
 
         try:
-            # Ensure DISPLAY is set
-            env = os.environ.copy()
-            if 'DISPLAY' not in env:
-                env['DISPLAY'] = ':0'
-                logger.info("DISPLAY not set, using :0")
+            cmds_tried = []
 
-            logger.info(f"Environment DISPLAY: {env.get('DISPLAY')}")
+            # Wayland-first strategies
+            if session_type == 'wayland':
+                # GNOME Wayland: grim usually produces black. Prefer gnome-screenshot if available.
+                is_gnome = 'gnome' in desktop_env
 
-            # Run scrot
-            result = subprocess.run(
-                ['scrot', '-z', filepath],  # -z = compression
-                env=env,
-                capture_output=True,
-                timeout=10,
-                check=False
-            )
+                if not is_gnome and _exists('grim'):
+                    cmds_tried.append('grim')
+                    res = subprocess.run(['grim', filepath], capture_output=True, timeout=10)
+                    if res.returncode == 0 and _ok(filepath):
+                        size = os.path.getsize(filepath)
+                        return {'status': 'success', 'message': '📸 Screenshot captured (grim)', 'file': filename, 'size': size}
+                    else:
+                        logger.warning('grim captured but file invalid or black')
 
-            # Check if scrot succeeded
-            if result.returncode == 0 and os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                size = os.path.getsize(filepath)
-                logger.info(f"✅ Screenshot success: {size} bytes")
-                return {
-                    'status': 'success',
-                    'message': '📸 Screenshot captured with scrot',
-                    'file': filename,
-                    'size': size
-                }
-            else:
-                # scrot failed
-                stderr = result.stderr.decode() if result.stderr else 'No error output'
-                logger.error(f"❌ scrot failed: {stderr}")
+                # GNOME or fallback: try gnome-screenshot first
+                if _exists('gnome-screenshot'):
+                    cmds_tried.append('gnome-screenshot')
+                    res = subprocess.run(['gnome-screenshot', '-f', filepath], capture_output=True, timeout=15)
+                    if res.returncode == 0 and _ok(filepath):
+                        size = os.path.getsize(filepath)
+                        return {'status': 'success', 'message': '📸 Screenshot captured (gnome-screenshot)', 'file': filename, 'size': size}
+                    else:
+                        logger.warning('gnome-screenshot returned but file invalid or black')
 
+                # KDE Wayland alternative
+                if _exists('spectacle'):
+                    cmds_tried.append('spectacle')
+                    res = subprocess.run(['spectacle', '--noninteractive', '--background', '--output', filepath], capture_output=True, timeout=15)
+                    if res.returncode == 0 and _ok(filepath):
+                        size = os.path.getsize(filepath)
+                        return {'status': 'success', 'message': '📸 Screenshot captured (spectacle)', 'file': filename, 'size': size}
+                    else:
+                        logger.warning('spectacle returned but file invalid or black')
+
+                # Fallback X11 tools (often black under Wayland, but attempt)
+                if 'DISPLAY' not in env:
+                    env['DISPLAY'] = ':0'
+                if _exists('scrot'):
+                    cmds_tried.append('scrot')
+                    res = subprocess.run(['scrot', '-z', filepath], env=env, capture_output=True, timeout=10)
+                    if res.returncode == 0 and _ok(filepath):
+                        size = os.path.getsize(filepath)
+                        return {'status': 'success', 'message': '📸 Screenshot captured (scrot via XWayland)', 'file': filename, 'size': size}
+                if _exists('maim'):
+                    cmds_tried.append('maim')
+                    res = subprocess.run(['maim', filepath], env=env, capture_output=True, timeout=10)
+                    if res.returncode == 0 and _ok(filepath):
+                        size = os.path.getsize(filepath)
+                        return {'status': 'success', 'message': '📸 Screenshot captured (maim via XWayland)', 'file': filename, 'size': size}
+
+                # Portal suggestion if all fail
+                portal_hint = 'Install gnome-screenshot (GNOME) or use xdg-desktop-portal screenshot tools.'
                 return {
                     'status': 'error',
-                    'message': f'scrot failed: {stderr}\n\nMake sure scrot is installed:\nsudo pacman -S scrot'
+                    'message': 'Failed to capture on Wayland. ' + portal_hint + '\nTried: ' + (', '.join(cmds_tried) or 'none')
                 }
 
-        except FileNotFoundError:
-            logger.error("❌ scrot not found")
+            # X11 path (default)
+            if 'DISPLAY' not in env:
+                env['DISPLAY'] = ':0'
+            if _exists('scrot'):
+                cmds_tried.append('scrot')
+                res = subprocess.run(['scrot', '-z', filepath], env=env, capture_output=True, timeout=10)
+                if res.returncode == 0 and _ok(filepath):
+                    size = os.path.getsize(filepath)
+                    return {'status': 'success', 'message': '📸 Screenshot captured (scrot)', 'file': filename, 'size': size}
+
+            # Secondary X11 tools
+            if _exists('maim'):
+                cmds_tried.append('maim')
+                res = subprocess.run(['maim', filepath], env=env, capture_output=True, timeout=10)
+                if res.returncode == 0 and _ok(filepath):
+                    size = os.path.getsize(filepath)
+                    return {'status': 'success', 'message': '📸 Screenshot captured (maim)', 'file': filename, 'size': size}
+
             return {
                 'status': 'error',
-                'message': 'scrot not installed.\n\nInstall it:\nsudo pacman -S scrot'
+                'message': 'No working screenshot tool found. Install scrot (X11) or grim/spectacle/gnome-screenshot (Wayland).\nTried: ' + ', '.join(cmds_tried) or 'none'
             }
 
         except subprocess.TimeoutExpired:
-            logger.error("❌ scrot timeout")
-            return {
-                'status': 'error',
-                'message': 'Screenshot timeout. Try again.'
-            }
-
+            return {'status': 'error', 'message': 'Screenshot timeout. Try again.'}
         except Exception as e:
-            logger.error(f"❌ Screenshot error: {e}")
-            return {
-                'status': 'error',
-                'message': f'Screenshot failed: {str(e)}'
-            }
+            logger.error(f"Screenshot error: {e}")
+            return {'status': 'error', 'message': f'Screenshot failed: {str(e)}'}
