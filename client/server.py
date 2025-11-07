@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, abort
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
@@ -8,6 +8,9 @@ import psutil
 import time
 import subprocess
 from functools import wraps
+from io import BytesIO
+import socket
+import mimetypes
 
 # Load environment
 load_dotenv()
@@ -21,6 +24,11 @@ HOST = os.getenv('HOST', '127.0.0.1')
 PORT = int(os.getenv('PORT', 5000))
 UPLOAD_DIR = os.getenv('UPLOAD_DIR', './uploads')
 SCREENSHOT_DIR = os.getenv('SCREENSHOT_DIR', './screenshots')
+# (Optional) batasi download ke direktori ini saja (boleh ditambah)
+ALLOWED_DOWNLOAD_DIRS = [
+    os.path.abspath(UPLOAD_DIR),
+    os.path.abspath(SCREENSHOT_DIR),
+]
 
 # Create directories
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -39,6 +47,7 @@ def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get('Authorization', '')
+
         token = auth_header.replace('Bearer ', '') if auth_header.startswith('Bearer ') else auth_header
 
         if not token:
@@ -46,17 +55,16 @@ def require_auth(f):
             return jsonify({'status': 'error', 'message': 'Missing auth token'}), 401
 
         if token != AUTH_TOKEN:
-            logger.warning(f'❌ Invalid token: {token[:10]}... (expected: {AUTH_TOKEN[:10]}...)')
+            logger.warning('❌ Invalid token attempt')
             return jsonify({'status': 'error', 'message': 'Invalid auth token'}), 401
 
-        logger.info('✅ Auth OK')
         return f(*args, **kwargs)
 
     return decorated
 
 
 # ===========================
-# ROUTES
+# BASIC ROUTES
 # ===========================
 
 @app.route('/', methods=['GET'])
@@ -85,13 +93,17 @@ def get_status():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+# ===========================
+# COMMAND ROUTE
+# ===========================
+
 @app.route('/command', methods=['POST'])
 @require_auth
 def handle_command():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         command = data.get('command')
-        params = data.get('params', {})
+        params = data.get('params', {}) or {}
 
         logger.info(f'📥 Command: {command} | Params: {params}')
 
@@ -104,24 +116,32 @@ def handle_command():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+# ===========================
+# FILE UPLOAD
+# ===========================
+
 @app.route('/upload', methods=['POST'])
 @require_auth
 def handle_upload():
     try:
         import requests
-
-        data = request.get_json()
-        filename = data.get('filename')
+        data = request.get_json(force=True)
+        filename = (data.get('filename') or '').strip()
         url = data.get('url')
 
-        logger.info(f'📥 Downloading: {filename}')
+        if not filename or not url:
+            return jsonify({'status': 'error', 'message': 'Missing filename or url'}), 400
 
+        # Sanitasi nama file sederhana
+        filename = os.path.basename(filename)
         filepath = os.path.join(UPLOAD_DIR, filename)
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
 
+        logger.info(f'📥 Downloading from Telegram: {filename}')
+
+        r = requests.get(url, stream=True, timeout=30)
+        r.raise_for_status()
         with open(filepath, 'wb') as f:
-            for chunk in response.iter_content(8192):
+            for chunk in r.iter_content(8192):
                 f.write(chunk)
 
         logger.info(f'✅ Saved: {filepath}')
@@ -131,6 +151,44 @@ def handle_upload():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+# ===========================
+# FILE DOWNLOAD (generic)
+# ===========================
+
+@app.route('/getfile', methods=['POST'])
+@require_auth
+def get_file_generic():
+    """
+    Download arbitrary file by path (used by bot for user-supplied paths).
+    Restrict to ALLOWED_DOWNLOAD_DIRS to avoid traversal abuse.
+    """
+    try:
+        data = request.get_json(force=True)
+        path_req = data.get('path', '').strip()
+
+        if not path_req:
+            return jsonify({'status': 'error', 'message': 'Path required'}), 400
+
+        abs_path = os.path.abspath(path_req)
+
+        # Allow if inside one of allowed dirs OR exact file exists and user intentionally wants it (optional).
+        if not any(abs_path.startswith(allowed + os.sep) or abs_path == allowed for allowed in ALLOWED_DOWNLOAD_DIRS):
+            return jsonify({'status': 'error', 'message': 'Access denied to this path'}), 403
+
+        if not os.path.exists(abs_path) or not os.path.isfile(abs_path):
+            return jsonify({'status': 'error', 'message': 'File not found'}), 404
+
+        # Stream the file
+        mime, _ = mimetypes.guess_type(abs_path)
+        mime = mime or 'application/octet-stream'
+        return send_file(abs_path, mimetype=mime, as_attachment=True,
+                         download_name=os.path.basename(abs_path))
+    except Exception as e:
+        logger.error(f'Download error: {e}')
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# Existing screenshot download route (unchanged)
 @app.route('/download/<filename>', methods=['GET'])
 @require_auth
 def download_file(filename):
@@ -144,22 +202,21 @@ def download_file(filename):
 
 
 # ===========================
-# COMMAND EXECUTION (EXTENDED FOR V1.1)
+# COMMAND EXECUTION
 # ===========================
 
 def execute_command(command, params):
     os_name = platform.system()
 
     try:
-        # ===== EXISTING COMMANDS =====
+        # -------- CORE (sudah ada) --------
         if command == 'lock':
             if os_name == 'Linux':
                 subprocess.run(['loginctl', 'lock-session'], check=False)
             elif os_name == 'Windows':
                 subprocess.run(['rundll32.exe', 'user32.dll,LockWorkStation'])
             elif os_name == 'Darwin':
-                subprocess.run(
-                    ['/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession', '-suspend'])
+                subprocess.run(['/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession', '-suspend'])
             return {'status': 'success', 'message': '🔒 Screen locked'}
 
         elif command == 'volume':
@@ -193,23 +250,17 @@ def execute_command(command, params):
             return {'status': 'success', 'message': 'Clipboard content', 'content': content}
 
         elif command == 'screenshot':
-            # Using scrot as per your implementation
             if os_name != 'Linux':
-                return {'status': 'error', 'message': 'Screenshot only supported on Linux'}
-
+                return {'status': 'error', 'message': 'Screenshot only implemented for Linux in this build'}
             env = os.environ.copy()
             if 'DISPLAY' not in env:
                 env['DISPLAY'] = ':0'
-
             filename = f'screenshot_{int(time.time())}.png'
             filepath = os.path.join(SCREENSHOT_DIR, filename)
-
-            result = subprocess.run(['scrot', '-z', filepath], env=env, capture_output=True, timeout=10)
-
+            result = subprocess.run(['scrot', '-z', filepath], env=env, capture_output=True)
             if result.returncode == 0 and os.path.exists(filepath):
                 return {'status': 'success', 'message': '📸 Screenshot captured', 'file': filename}
-            else:
-                return {'status': 'error', 'message': 'Screenshot failed. Install scrot: sudo pacman -S scrot'}
+            return {'status': 'error', 'message': 'Failed to capture screenshot (scrot). Install/pastikan DISPLAY benar.'}
 
         elif command == 'sleep':
             if os_name == 'Linux':
@@ -229,232 +280,84 @@ def execute_command(command, params):
                 subprocess.Popen(['sudo', 'shutdown', '-h', '+1'])
             return {'status': 'success', 'message': '⚠️ Shutting down in 1 minute...'}
 
-        # ===== NEW V1.1 COMMANDS =====
-
-        # Media Player Control
-        elif command == 'media_play_pause':
-            if os_name == 'Linux':
-                try:
-                    subprocess.run(['playerctl', 'play-pause'], check=True, timeout=5)
-                    return {'status': 'success', 'message': '⏯️ Play/Pause toggled'}
-                except FileNotFoundError:
-                    return {'status': 'error', 'message': 'playerctl not installed. Install: sudo pacman -S playerctl'}
-            return {'status': 'error', 'message': 'Not supported on this OS'}
-
-        elif command == 'media_next':
-            if os_name == 'Linux':
-                try:
-                    subprocess.run(['playerctl', 'next'], check=True, timeout=5)
-                    return {'status': 'success', 'message': '⏭️ Next track'}
-                except FileNotFoundError:
-                    return {'status': 'error', 'message': 'playerctl not installed'}
-            return {'status': 'error', 'message': 'Not supported on this OS'}
-
-        elif command == 'media_previous':
-            if os_name == 'Linux':
-                try:
-                    subprocess.run(['playerctl', 'previous'], check=True, timeout=5)
-                    return {'status': 'success', 'message': '⏮️ Previous track'}
-                except FileNotFoundError:
-                    return {'status': 'error', 'message': 'playerctl not installed'}
-            return {'status': 'error', 'message': 'Not supported on this OS'}
-
-        elif command == 'media_stop':
-            if os_name == 'Linux':
-                try:
-                    subprocess.run(['playerctl', 'stop'], check=True, timeout=5)
-                    return {'status': 'success', 'message': '⏹️ Playback stopped'}
-                except FileNotFoundError:
-                    return {'status': 'error', 'message': 'playerctl not installed'}
-            return {'status': 'error', 'message': 'Not supported on this OS'}
-
-        elif command == 'media_now_playing':
-            if os_name == 'Linux':
-                try:
-                    artist = subprocess.run(['playerctl', 'metadata', 'artist'], capture_output=True, text=True,
-                                            timeout=5).stdout.strip()
-                    title = subprocess.run(['playerctl', 'metadata', 'title'], capture_output=True, text=True,
-                                           timeout=5).stdout.strip()
-                    status = subprocess.run(['playerctl', 'status'], capture_output=True, text=True,
-                                            timeout=5).stdout.strip()
-
-                    if artist and title:
-                        return {
-                            'status': 'success',
-                            'message': '🎵 Now Playing',
-                            'track': f'{artist} - {title}',
-                            'playback_status': status
-                        }
-                    return {'status': 'success', 'message': '🎵 No track playing'}
-                except FileNotFoundError:
-                    return {'status': 'error', 'message': 'playerctl not installed'}
-            return {'status': 'error', 'message': 'Not supported on this OS'}
-
-        # Battery Status
+        # -------- NEW (battery / network) --------
         elif command == 'battery_status':
-            battery = psutil.sensors_battery()
-
+            try:
+                battery = psutil.sensors_battery()
+            except Exception:
+                battery = None
             if battery is None:
-                return {'status': 'success', 'message': '🔌 No battery detected (Desktop PC)', 'has_battery': False}
-
+                return {
+                    'status': 'success',
+                    'message': '🔌 No battery detected',
+                    'details': '🔌 Deskop / Tidak ada battery terdeteksi'
+                }
             percent = battery.percent
             plugged = battery.power_plugged
-            charging_status = '🔌 Charging' if plugged else '🔋 On Battery'
-
-            time_remaining = battery.secsleft
-            if time_remaining == psutil.POWER_TIME_UNLIMITED:
-                time_str = 'Unlimited (Plugged in)'
-            elif time_remaining == psutil.POWER_TIME_UNKNOWN:
-                time_str = 'Unknown'
+            time_left = battery.secsleft
+            if time_left in (psutil.POWER_TIME_UNLIMITED, psutil.POWER_TIME_UNKNOWN):
+                tl = 'Unknown'
             else:
-                hours = time_remaining // 3600
-                minutes = (time_remaining % 3600) // 60
-                time_str = f'{hours}h {minutes}m remaining'
-
-            icon = '🔋' if percent >= 30 else '⚠️' if percent >= 15 else '❗'
-
-            details = f'{icon} {percent}% - {charging_status}\n⏱️ {time_str}'
-
+                h = time_left // 3600
+                m = (time_left % 3600) // 60
+                tl = f'{h}h {m}m remaining'
+            icon = '🔋' if percent >= 30 else '⚠️'
+            details = f"{icon} {percent}% - {'Charging' if plugged else 'On Battery'}\n⏱️ {tl}"
             return {
                 'status': 'success',
-                'message': f'{icon} Battery Status',
+                'message': f'{icon} Battery {percent}%',
                 'percent': percent,
                 'charging': plugged,
                 'details': details
             }
 
-        # Network Information
         elif command == 'network_info':
-            import socket
-
             hostname = socket.gethostname()
-
-            # Get interfaces
+            # Gather interface IPv4
             interfaces = []
-            stats = psutil.net_if_addrs()
-            for iface, addrs in stats.items():
-                for addr in addrs:
-                    if addr.family == socket.AF_INET and addr.address != '127.0.0.1':
-                        interfaces.append({'name': iface, 'ip': addr.address})
-
-            details = f"🖥️ Hostname: {hostname}\n\n"
+            try:
+                for name, addrs in psutil.net_if_addrs().items():
+                    for a in addrs:
+                        if a.family == socket.AF_INET and a.address != '127.0.0.1':
+                            interfaces.append({'iface': name, 'ip': a.address})
+            except Exception:
+                pass
+            details = f"🖥️ Host: {hostname}\n"
             if interfaces:
-                details += "📡 Network Interfaces:\n"
-                for iface in interfaces:
-                    details += f"  • {iface['name']}: {iface['ip']}\n"
-
+                details += "📡 Interfaces:\n" + "\n".join([f" - {i['iface']}: {i['ip']}" for i in interfaces])
+            else:
+                details += "📡 No active non-loopback IPv4 interface"
             return {
                 'status': 'success',
-                'message': '🌐 Network Information',
-                'hostname': hostname,
+                'message': '🌐 Network Info',
                 'interfaces': interfaces,
                 'details': details
             }
 
         elif command == 'network_stats':
-            stats = psutil.net_io_counters()
-
-            def bytes_to_human(n):
-                for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-                    if n < 1024.0:
-                        return f"{n:.2f} {unit}"
-                    n /= 1024.0
-
-            details = (
-                f"📤 Sent: {bytes_to_human(stats.bytes_sent)}\n"
-                f"📥 Received: {bytes_to_human(stats.bytes_recv)}\n"
-                f"📦 Packets Sent: {stats.packets_sent:,}\n"
-                f"📦 Packets Recv: {stats.packets_recv:,}"
-            )
-
-            return {
-                'status': 'success',
-                'message': '📊 Network Statistics',
-                'sent': bytes_to_human(stats.bytes_sent),
-                'received': bytes_to_human(stats.bytes_recv),
-                'details': details
-            }
-
-        # Process Management
-        elif command == 'process_list':
-            sort_by = params.get('sort_by', 'cpu')
-            limit = params.get('limit', 10)
-
-            processes = []
-            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
-                try:
-                    info = proc.info
-                    processes.append({
-                        'pid': info['pid'],
-                        'name': info['name'],
-                        'cpu': info['cpu_percent'] or 0,
-                        'memory': info['memory_percent'] or 0
-                    })
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-
-            # Sort
-            if sort_by == 'cpu':
-                processes.sort(key=lambda x: x['cpu'], reverse=True)
-            elif sort_by == 'memory':
-                processes.sort(key=lambda x: x['memory'], reverse=True)
-
-            top_processes = processes[:limit]
-
-            details = f"🔝 Top {limit} Processes (by {sort_by.upper()}):\n\n"
-            for i, proc in enumerate(top_processes, 1):
-                details += f"{i}. {proc['name']}\n   PID: {proc['pid']} | CPU: {proc['cpu']:.1f}% | RAM: {proc['memory']:.1f}%\n\n"
-
-            return {
-                'status': 'success',
-                'message': '💻 Process List',
-                'processes': top_processes,
-                'details': details
-            }
-
-        elif command == 'process_search':
-            name = params.get('name', '')
-            matches = []
-
-            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
-                try:
-                    if name.lower() in proc.info['name'].lower():
-                        matches.append({
-                            'pid': proc.info['pid'],
-                            'name': proc.info['name'],
-                            'cpu': proc.info['cpu_percent'] or 0,
-                            'memory': proc.info['memory_percent'] or 0
-                        })
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-
-            if not matches:
-                return {'status': 'success', 'message': f'🔍 No processes found matching: {name}'}
-
-            details = f"🔍 Found {len(matches)} process(es) matching '{name}':\n\n"
-            for proc in matches:
-                details += f"• {proc['name']}\n  PID: {proc['pid']} | CPU: {proc['cpu']:.1f}% | RAM: {proc['memory']:.1f}%\n\n"
-
-            return {
-                'status': 'success',
-                'message': f'🔍 Search Results',
-                'processes': matches,
-                'details': details
-            }
-
-        elif command == 'process_kill':
-            pid = params.get('pid')
             try:
-                process = psutil.Process(pid)
-                name = process.name()
-                process.terminate()
-                process.wait(timeout=5)
-                return {'status': 'success', 'message': f'✅ Process killed: {name} (PID: {pid})'}
-            except psutil.NoSuchProcess:
-                return {'status': 'error', 'message': f'❌ Process not found (PID: {pid})'}
-            except psutil.AccessDenied:
-                return {'status': 'error', 'message': f'❌ Access denied (PID: {pid})'}
+                io = psutil.net_io_counters()
+                def human(b):
+                    for unit in ['B','KB','MB','GB','TB']:
+                        if b < 1024:
+                            return f"{b:.2f} {unit}"
+                        b /= 1024
+                details = (
+                    f"📊 Network Stats\n"
+                    f"📤 Sent: {human(io.bytes_sent)}\n"
+                    f"📥 Received: {human(io.bytes_recv)}\n"
+                    f"📦 Packets Sent: {io.packets_sent}\n"
+                    f"📦 Packets Recv: {io.packets_recv}"
+                )
+                return {
+                    'status': 'success',
+                    'message': '📊 Network Statistics',
+                    'details': details
+                }
+            except Exception as e:
+                return {'status': 'error', 'message': f'Failed to read network stats: {e}'}
 
+        # -------- Unknown --------
         else:
             return {'status': 'error', 'message': f'Unknown command: {command}'}
 
@@ -469,20 +372,11 @@ def execute_command(command, params):
 
 if __name__ == '__main__':
     print('\n' + '=' * 60)
-    print('🚀 KDE Connect Bot - Python Client v1.1')
+    print('🚀 KDE Connect Bot - Python Client (Enhanced)')
     print('=' * 60)
-    print(f'📡 Host: {HOST}')
-    print(f'🔌 Port: {PORT}')
+    print(f'📡 Host: {HOST}:{PORT}')
     print(f'🔒 Auth: {"✅ ENABLED" if AUTH_TOKEN else "❌ DISABLED"}')
-    if AUTH_TOKEN:
-        print(f'🔑 Token: {AUTH_TOKEN[:10]}...{AUTH_TOKEN[-5:]}')
-    print('\n🆕 Version 1.1 Features:')
-    print('   ✅ Media player control (playerctl)')
-    print('   ✅ Battery status monitoring')
-    print('   ✅ Network information')
-    print('   ✅ Process management')
+    print(f'📁 Upload dir: {os.path.abspath(UPLOAD_DIR)}')
+    print(f'🖼️ Screenshot dir: {os.path.abspath(SCREENSHOT_DIR)}')
     print('=' * 60)
-    print(f'\n✅ Server running at http://{HOST}:{PORT}')
-    print('   Waiting for Telegram bot commands...\n')
-
     app.run(host=HOST, port=PORT, debug=False, threaded=True)
