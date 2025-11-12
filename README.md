@@ -367,6 +367,8 @@ The bot uses a **persistent reply keyboard** that stays visible:
 | `/status` | Show system information | `/status` |
 | `/volume <0-100>` | Set volume level | `/volume 50` |
 | `/copy <text>` | Copy text to clipboard | `/copy Hello World` |
+| `/search <process>` | Search for running processes | `/search chrome` |
+| `/kill <pid>` | Kill a process by PID | `/kill 1234` |
 | `/confirm_shutdown` | Confirm PC shutdown | After shutdown warning |
 
 ### System Menu (🖥️ System)
