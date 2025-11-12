@@ -151,6 +151,11 @@ def _cmd_process_kill(p):
     if pid is None:
         return {'status': 'error', 'message': 'pid required'}
     return process_handler.kill_process(pid)
+def _cmd_process_search(p):
+    name = p.get('name')
+    if not name:
+        return {'status': 'error', 'message': 'process name required'}
+    return process_handler.search_process(name)
 def _cmd_media_play_pause(_):
     return media_handler.play_pause()
 def _cmd_media_next(_):
@@ -176,6 +181,7 @@ COMMAND_MAP: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     'network_stats': _cmd_network_stats,
     'process_list': _cmd_process_list,
     'process_kill': _cmd_process_kill,
+    'process_search': _cmd_process_search,
     'media_play_pause': _cmd_media_play_pause,
     'media_next': _cmd_media_next,
     'media_previous': _cmd_media_previous,

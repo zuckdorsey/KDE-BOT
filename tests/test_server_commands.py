@@ -61,3 +61,34 @@ def test_download_restriction(client, tmp_path, monkeypatch):
     resp = client.post("/getfile", data=json.dumps({"path": str(outside_path)}), headers=auth_headers())
     assert resp.status_code in (403, 500)
 
+
+def test_process_search_with_name(client):
+    """Test process search with a valid process name"""
+    payload = {"command": "process_search", "params": {"name": "python"}}
+    resp = client.post("/command", data=json.dumps(payload), headers=auth_headers())
+    assert resp.status_code == 200
+    data = resp.get_json()
+    # Should return success even if no processes found
+    assert data["status"] == "success"
+    assert "message" in data
+
+
+def test_process_search_without_name(client):
+    """Test process search without providing a name"""
+    payload = {"command": "process_search", "params": {}}
+    resp = client.post("/command", data=json.dumps(payload), headers=auth_headers())
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "error"
+    assert "process name required" in data["message"]
+
+
+def test_process_list(client):
+    """Test process list command"""
+    payload = {"command": "process_list", "params": {"sort_by": "cpu", "limit": 5}}
+    resp = client.post("/command", data=json.dumps(payload), headers=auth_headers())
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "success"
+    assert "details" in data or "message" in data
+
