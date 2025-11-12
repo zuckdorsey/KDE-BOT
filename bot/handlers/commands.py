@@ -179,3 +179,27 @@ async def cmd_kill(message: Message):
 
     except (IndexError, ValueError):
         await message.answer('❌ Usage: /kill <pid>\n\nExample: /kill 1234')
+
+
+@router.message(Command('search'))
+async def cmd_search(message: Message):
+    """Handle /search <process_name> command"""
+    try:
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            raise ValueError
+
+        process_name = args[1].strip()
+
+        msg = await message.answer(f'🔍 Searching for: {process_name}...')
+        result = await client.send_command('process_search', {'name': process_name})
+
+        if result.get('status') == 'success':
+            text = result.get('details', result.get('message'))
+        else:
+            text = f"❌ {result.get('message')}"
+
+        await msg.edit_text(text)
+
+    except (IndexError, ValueError):
+        await message.answer('❌ Usage: /search <process_name>\n\nExample: /search chrome')

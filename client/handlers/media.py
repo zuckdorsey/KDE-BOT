@@ -6,10 +6,16 @@ Supports play/pause, next, previous, volume
 import platform
 import subprocess
 import logging
-from pynput.keyboard import Key, Controller
 
 logger = logging.getLogger(__name__)
-keyboard = Controller()
+
+# Try to import pynput, but don't fail if not available (e.g., in headless environments)
+try:
+    from pynput.keyboard import Key, Controller
+    keyboard = Controller()
+except Exception as e:
+    logger.warning(f"pynput not available: {e}. Media key fallback disabled.")
+    keyboard = None
 
 
 class MediaHandler:
